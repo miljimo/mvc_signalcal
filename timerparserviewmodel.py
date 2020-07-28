@@ -1,233 +1,146 @@
 """
- Pressed to record hours until the day is over pressed to stop for break
- 
+ Create the timesheet model . to calculated the time sheet as the time is entered.
 """
-import xlrd
-import pyexcel_ods;
 import os;
-import xlrd
-import pyexcel_ods;
-from pyexcel_ods import get_data
+from PyPDF2 import PdfFileWriter;
 from controllerbase import ControllerBase
-from timesheet import Timesheet
-from timesheet import DayOfWeekType
-from timesheet import Project,ProjectType;
-from collections import OrderedDict
-import json
+from modelbase import ModelBase;
+from timesheet import Timesheet, Project, ProjectType , DayOfWeekType
+from timesheetreader import TimesheetReader,  ODSTimesheetReader, XLSTimesheetReader
+from timesheetrecorder import TimesheetRecorder
+import datetime as dt;
+from threading import Thread, Lock
 
-class TimesheetReader(object):
+    
+DAILY_EXPECTED_HOURS  = 35.00 # this is for servotest
+WEEKLY_UNPAY_OVERTIME_HOURS  = 2.0   #  Servotest
 
-    def __init__(self, filename : str):
+
+
+
+    
+
+class TimesheetModel(ModelBase):
+
+    def __init__(self, filename:str = None, daily_expected_hours =  DAILY_EXPECTED_HOURS , benefit_hours  = WEEKLY_UNPAY_OVERTIME_HOURS ):
+        super().__init__();
         if(os.path.exists(filename) is not True):
-            raise TypeError("@Timesheet Controller : {0} name does not exists");
-        self.__Filename  =  filename;
+            raise TypeError("{0} does not exists".format(filename));
+        details  = os.path.splitext(filename)
+        if(len(details) <= 1):
+            raise TypeError("@Invalid file extension provided");
+        extension = details[1][1:].lower();
+        if(extension =='xls') or (extension  == 'xlsx'):
+            self.__Reader  =  XLSTimesheetReader(filename  =  filename);
+        elif(extension=='ods'):
+            self.__Reader  = ODSTimesheetReader(filename  =  filename);
+        self.__IsAlreadyLoaded = False;
+        self.__Timesheet = None;
+        self.__DailyExpectedHours  = daily_expected_hours if((type(daily_expected_hours) == float) or (type(daily_expected_hours) == int)) else 0.0
+        self.__WeeklyUnPayOvertimeHours  = benefit_hours if((type(benefit_hours) == float) or (type(benefit_hours) == int)) else 0.0
+        #Load the timesheet
+        if(self.__Reader != None):
+            if(self.__IsAlreadyLoaded != True):
+                self.__Timesheet  =  self.__Reader.Parse()
+                self.__IsAlreadyLoaded = True
+        self.__TimeRecorder  = TimesheetRecorder(interval = 1);
+        self.__CurrentProject  = None;
 
-    def Parse(self):
-        raise NotImplementedError("@Parse: method must be implemented.");
 
     @property
-    def Filename(self):
-        return self.__Filename;
+    def Recorder(self):
+        return self.__TimeRecorder;
+                
+    @property
+    def WeeklyUnPayOvertimeHours(self):
+        return self.__WeeklyUnPayOvertimeHours;
 
 
-    def __ParseProject(self, project_rec:list,  project_type:int):
-        project  = None
+    @property
+    def DailyExpectedHours(self) -> float:
+        return self.__DailyExpectedHours
+
+    @DailyExpectedHours.setter
+    def DailyExpectedHours(self, hours:float):
+        if(type(hours) != float):
+            if(type(hours) != int):
+                raise TypeError("@DailyExpectedHours: expecting a floating point value")
+        self.__DailyExpectedHours =  hours        
+
         
-        if(len(project_rec) > 4):
-            #Filter out unfilled timesheet projects
-            #get the  project details'
-            details    =  project_rec[0:5]
-            hours_recs =  project_rec[5:]
-                                  
-            if(len(hours_recs) >= 0) and (len(details) == 5):
-                orderno =  str(details[1]).strip();
-                #Only allow if order number is not empty or the project type is a fixed project.
-                if(orderno != "") or (project_type  ==  ProjectType.FIXED_PROJECT):
-                    #Create the project objects.
-                    project                 =  Project(orderno,project_type);
-                    project.RSRCE           =  str(details[0]).strip();
-                    project.ContractNumber  =  str(details[2]).strip();
-                    project.Description     =  str(details[4]).strip();
+    @property
+    def Timesheet(self):
+        return self.__Timesheet
 
-                    #Load the project hours
-                    ndays  =  len(hours_recs);
-                    if(ndays > 0):
-                        project.ElapseHours[DayOfWeekType.MONDAY]    = self.toNumber(hours_recs[0])                                            
-                    if(ndays > 1):
-                        project.ElapseHours[DayOfWeekType.TUESDAY]   = self.toNumber(hours_recs[1])
-                            
-                    if(ndays > 2):
-                        project.ElapseHours[DayOfWeekType.WEDNESDAY] = self.toNumber(hours_recs[2])
+    @property
+    def Project(self):
+        return self.__CurrentProject;
 
-                    if(ndays > 3):
-                        project.ElapseHours[DayOfWeekType.THURSDAY]  = self.toNumber(hours_recs[3])
+    @Project.setter
+    def Project(self, project: Project):
+        if(isinstance(project, Project) is not True):
+            raise  TypeError("@Project: expecting a Timesheet.Project object type");
+        self.__CurrentProject  =  project
 
-                    if(ndays > 4):
-                        project.ElapseHours[DayOfWeekType.FRIDAY]    = self.toNumber(hours_recs[4])
-                                                
-                    if(ndays > 5):
-                        project.ElapseHours[DayOfWeekType.SATURDAY]  = self.toNumber(hours_recs[5])
 
-                    if(ndays > 6):
-                        project.ElapseHours[DayOfWeekType.SUNDAY]    = self.toNumber(hours_recs[6])
+    def Compute(self)-> Timesheet:                
+        if( self.Timesheet is not None):
+            self.Timesheet.Compute();
+            # computer  total legal hours and overtimehours
+            if(self.Timesheet.ElapseHours > self.DailyExpectedHours):
+
+                overtimeDiff  =  (self.Timesheet.ElapseHours   - self.DailyExpectedHours)
+                if(overtimeDiff  > self.WeeklyUnPayOvertimeHours):
+                    self.Timesheet.OverTimeHours   = overtimeDiff - self.WeeklyUnPayOvertimeHours;
+            self.Timesheet.TotalLegalHours =  self.Timesheet.ElapseHours   - self.Timesheet.OverTimeHours
+
+    @property
+    def Projects(self):
+        projects  =  list();
+        if(self.Timesheet.Projects is not None):
+            projects  =  self.Timesheet.Projects.Records + self.Timesheet.Projects.FixedRecords;
+        return projects;
+
+    def CreateProject(self , **kwargs):
+      
+        contract             =  kwargs['contract'] if('contract' in kwargs) else None;
+        workOrderNumber      =  kwargs['work_order_number'] if('work_order_number' in kwargs) else "";
+        project_type         =  kwargs['project_type'] if('project_type' in kwargs) else ProjectType.USER_DEFINED_PROJECT;
+        
+        if(contract is None):
+            raise TypeError("@CreateProject: expect the contract number of the project");
+        project  = Project(workOrderNumber,project_type);
+        project.ContractNumber  = contract ;
+
+        if(project.Type  == ProjectType.USER_DEFINED_PROJECT):
+            self.Timesheet.Projects.Records.append(project)
+        else:
+            self.Timesheet.Projects.FixedRecords.append(project)
+
         return project;
+        
+        
 
+    def Find(self, **kwargs):
+        result   =  None;
+        contract  =  kwargs['contract'] if('contract' in kwargs) else '';
 
-    def toNumber(self, value:str):
-        value  =  str(value);
-        result  =  0.0;
-        if(value.strip() != ''):
-            try:
-                result  =  float(value);
-            except Exception as err:
-                print("@toNumber Error  = {0}".format(err));
-                pass;
+        for project in self.Projects:
+            if(project.ContractNumber  == contract):
+                result  =  project;
+                break;
         return result;
-            
-
-
-    def _ParseProjects(self, timesheet, projects_recs, projectType):
-               
-        for project_rec in  projects_recs:
-            project  = self.__ParseProject( project_rec, projectType);
-            if(project != None):
-                #Project defined
-                if(project.Type == ProjectType.USER_DEFINED_PROJECT):
-                    timesheet.Projects.Records.append(project);
-                elif(project.Type == ProjectType.FIXED_PROJECT):
-                    timesheet.Projects.FixedRecords.append(project);
-                else:
-                    raise TypeError("@Project type is invalid");
-        
-    
-
-class ODSTimesheetReader(TimesheetReader):
-
-    def __init__(self, filename:str):
-        super().__init__(filename);
-                                
-    def Parse(self):
-        timesheet  =  None;
-        workbook  =  pyexcel_ods.get_data(self.Filename);
-        keys =  list(workbook.keys());
-        if(len(keys) > 0):
-            sheets  =  list(workbook.items());
-            if(len(sheets) > 0):
-                # Interested in the first sheet
-                sheet  =  sheets[0];
-                if(sheet is not None):
-                    timesheet =  Timesheet(sheet[0])
-                    timesheet.OverTimeHours   = 0.0
-                    timesheet.TotalLegalHours = 0.0
-                    records  =  sheet[1];
-                    """
-                      Records are list of records.
-                      record are python list object of cell values that are not empty.
-                    """
-                    if(len(records) > 0):
-                        header_record       =  records[0];
-                        timesheet.Header    =  header_record[-1]
-
-                        #3record is weekly timesheet line
-                        
-                        weekly_record  =  records[2];
-                        timesheet.EmployeeName         = weekly_record[1]
-                        timesheet.Title                = weekly_record[2]
-                        timesheet.WeekEndingSunday     = weekly_record[4]
-
-                        #department record line
-                        department_record = records[3];
-                        timesheet.Department    = department_record[1]
-
-                        #timesheet description
-                        timesheet.Description   =  records[4][0];
-
-                        #project records
-                        project_column_headers  =  records[5]
-                        if(len(project_column_headers) > 5):
-                            timesheet.Projects.Header.append(project_column_headers[0]) # RSRCE
-                            timesheet.Projects.Header.append(project_column_headers[1]) # Work Order No
-                            timesheet.Projects.Header.append(project_column_headers[2]) # Contract Number
-                            timesheet.Projects.Header.append(project_column_headers[3]) # Total Hours
-                            timesheet.Projects.Header.append(project_column_headers[4]) # Description
-                    
-                            # Load the projects that are filled by default its fixed to 24 records
-                            user_defineds_recs = records[6:30]
-                            self._ParseProjects(timesheet, user_defineds_recs, ProjectType.USER_DEFINED_PROJECT);
-
-                            # Load the fixed projects or tasks projects.
-                            # this involves holidays , pay leaves e.t.c
-                            # there are 15 of does at the moment.
-                            fixed_project_recs =  records[31:45]
-                            self._ParseProjects(timesheet, fixed_project_recs, ProjectType.FIXED_PROJECT);
-
-                            # The year stamp time for the timesheet.
-                            template_records  = records[50:52];
-                            if(len(template_records) > 0):
-                                template_rec =  template_records[0];
-                                if(len(template_rec) > 0):
-                                   timesheet.Template =  template_rec[0];
-                            
-        return timesheet;
 
 
     
 
-
-class XLSTimesheetReader(TimesheetReader):
-
-    def __init__(self, filename :str):
-        super().__init__(filename);
-
-    def Parse(self):
-        timesheet  =  None;
-        workbook  =  xlrd.open_workbook(self.Filename);
-        if(len(workbook.sheets()) > 0):
-            #interested on the first sheet
-            sheet      =  workbook.sheets()[0];
-            timesheet  = Timesheet(sheet.name);
-            timesheet.OverTimeHours   = 0.0
-            timesheet.TotalLegalHours = 0.0
-            cell = sheet.cell(0,4) # the timesheet header text
-            if(cell is not None):            
-                timesheet.Header            = cell.value;
-            timesheet.EmployeeName          = sheet.cell(2, 2).value;
-            timesheet.Title                 = sheet.cell(2, 4).value
-            timesheet.WeekEndingSunday      = sheet.cell(2, 10).value
-            timesheet.Department            = sheet.cell(3, 2).value
-            timesheet.Description           = sheet.cell(4,0).value;
-
-            #Timesheet column titles
-            timesheet.Projects.Header.append(sheet.cell(5,0).value) # RSRCE
-            timesheet.Projects.Header.append(sheet.cell(5,1).value) # Work Order No
-            timesheet.Projects.Header.append(sheet.cell(5,2).value) # Contract Number
-            timesheet.Projects.Header.append(sheet.cell(5,3).value) # Total Hours
-            timesheet.Projects.Header.append(sheet.cell(5,4).value) # Description
-
-            # Load the projects that are filled by default its fixed to 24 records
-            user_defineds_recs = self.__FromRowAtToList(sheet, 6,30);                
-            self._ParseProjects(timesheet, user_defineds_recs, ProjectType.USER_DEFINED_PROJECT);
-
-            #Fixed records
-            fixed_project_recs =  self.__FromRowAtToList(sheet,31,45)
-          
-            self._ParseProjects(timesheet, fixed_project_recs, ProjectType.FIXED_PROJECT);
-            
-            # The year stamp time for the timesheet.
-            timesheet.Template  = sheet.cell(50,0).value;
+    
         
-        return timesheet
 
-    def __FromRowAtToList(self, sheet : xlrd.sheet, start:int , end:int):
-        records =  list();
-        for i in range(start, end):
-            row = sheet.row(i);
-            table =  list();
-            for cell in row:
-                table.append(cell.value);
-            records.append(table);
-        return records;
-        
+class  TimesheetController(ControllerBase):
+
+    def __init__(self):
+        super().__init__(self);
                 
                                 
 
@@ -236,24 +149,31 @@ class XLSTimesheetReader(TimesheetReader):
 if __name__ =="__main__":
     ODS_TIME_SHEET_FILE   = "./data/timesheet.ods"
     XLS_TIME_SHEET_FILE   = "./data/timesheet.xlsx"
-    WRITE_TEST_FILE   = "./data/timesheet_test.ods";
+    WRITE_TEST_FILE       = "./data/pdftest.pdf";
+    model       =  TimesheetModel(XLS_TIME_SHEET_FILE);
+    pdf_writer  =  PdfFileWriter();
 
-    treader   =  ODSTimesheetReader(filename= ODS_TIME_SHEET_FILE);
-    timesheet =  treader.Parse();
-    print(timesheet)
-    print(timesheet.Template);
-    print(timesheet.OverTimeHours);
-    print(timesheet.Description);
+    print("Creating a new Project");
+    project  =  model.CreateProject(contract  =  "OB890");
+    print(project)
+    print(project.WeeklyHours);
+    project.AddHour(DayOfWeekType.MONDAY, 2.0);
+    
 
-    #Write back the timesheet file
-
-    print("\n**************************TIMESHEET XLSX*****************************\n");
-    xslreader  = XLSTimesheetReader(filename = XLS_TIME_SHEET_FILE);
-    timesheet2 = xslreader.Parse();
-    print(timesheet2)
-    print(timesheet2.Template);
-    print(timesheet2.OverTimeHours);
-    print(timesheet2.Description);
+    print("Computing test");
+    model.Compute();
+    print(model.Timesheet.TotalLegalHours);
+    print(model.Timesheet.OverTimeHours);
+    print("\nPrint all project test");
+    for project in model.Projects:
+        print(project.ContractNumber);
+    print("\nFind existing contract");
+    project  =  model.Find(contract  = '61534');
+    if(project is not None):
+        print(project.ContractNumber);
+        print(project.WeeklyHours)
+    
+    
    
    
     
