@@ -2,6 +2,7 @@ from calculator import Calculator,EventHandler , ValueChangedEvent;
 import threading
 from calcview import CalculatorView;
 import time;
+from controllerbase import ControllerBase;
 
 
 class View(object):
@@ -22,11 +23,11 @@ class View(object):
     def Show(self):
         print("Showing");
         
-class Controller(object):
+class Controller(ControllerBase):
 
     def __init__(self , view, model):
+        super().__init__();
         self.__Calc  = model;
-        
         self.__View  = view;
         self.__View.ValueChanged += self.__OnViewValueChanged;
         self.__Calc.ValueChanged += self.__OnValueChanged;
@@ -34,7 +35,11 @@ class Controller(object):
         self.__recordValues  = list();
         self.__View.Clicked+=   self.__OnReplay
         self.__IsPlaying = False;
-        pass;
+
+        
+    def Launch(self):
+        if(self.__View is not None):
+            self.__View.Show();
 
     def __OnViewValueChanged(self, event):
         self.__Calc.a =  event.Value;
@@ -69,15 +74,6 @@ class Controller(object):
         self.__IsPlaying = False;
         
 
-
-    def Launch(self):
-        if(self.__View is not None):
-            self.__View.Show();
-
-
-
-
-    
 if __name__ =="__main__":
     view   = CalculatorView();
     calc   =   Calculator(2, 1);
