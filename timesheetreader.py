@@ -1,8 +1,8 @@
 import os;
 import xlrd
 import pyexcel_ods;
-from timesheet import Timesheet,DayOfWeekType
-from timesheet import Project,ProjectType;
+from timesheet   import Timesheet,DayOfWeekType
+from project     import Project,ProjectType;
 from collections import OrderedDict
 
 
@@ -49,33 +49,34 @@ class TimesheetReader(object):
                     #Load the project hours
                     ndays  =  len(hours_recs)
                     if(ndays > 0):
-                        project.ElapseHours[DayOfWeekType.MONDAY]    = self.toNumber(hours_recs[0])                                            
+                        project.TimeHistory.Insert( DayOfWeekType.MONDAY ,  self.__GetMillseconds(hours_recs[0]))                                            
                     if(ndays > 1):
-                        project.ElapseHours[DayOfWeekType.TUESDAY]   = self.toNumber(hours_recs[1])
+                         project.TimeHistory.Insert(DayOfWeekType.TUESDAY ,  self.__GetMillseconds(hours_recs[1]))
                             
                     if(ndays > 2):
-                        project.ElapseHours[DayOfWeekType.WEDNESDAY] = self.toNumber(hours_recs[2])
+                        project.TimeHistory.Insert(DayOfWeekType.WEDNESDAY,  self.__GetMillseconds(hours_recs[2]))
 
                     if(ndays > 3):
-                        project.ElapseHours[DayOfWeekType.THURSDAY]  = self.toNumber(hours_recs[3])
+                        project.TimeHistory.Insert(DayOfWeekType.THURSDAY, self.__GetMillseconds(hours_recs[3]))
 
                     if(ndays > 4):
-                        project.ElapseHours[DayOfWeekType.FRIDAY]    = self.toNumber(hours_recs[4])
+                        project.TimeHistory.Insert(DayOfWeekType.FRIDAY,self.__GetMillseconds(hours_recs[4]))
                                                 
                     if(ndays > 5):
-                        project.ElapseHours[DayOfWeekType.SATURDAY]  = self.toNumber(hours_recs[5])
+                        project.TimeHistory.Insert(DayOfWeekType.SATURDAY, self.__GetMillseconds(hours_recs[5]))
 
                     if(ndays > 6):
-                        project.ElapseHours[DayOfWeekType.SUNDAY]    = self.toNumber(hours_recs[6])
+                        project.TimeHistory.Insert(DayOfWeekType.SUNDAY, self.__GetMillseconds(hours_recs[6]))
         return project
 
 
-    def toNumber(self, value:str):
-        value  =  str(value)
+    def __GetMillseconds(self, value:str):
+        value  =  str(value).strip()
         result  =  0.0
-        if(value.strip() != ''):
+        if(value != ''):
             try:
-                result  =  float(value)
+                # Servotest time is in hours  to convert it to milliseconds 
+                result  =  float(value)  * 60 * 60 * 1000
             except Exception as err:
                 print("@toNumber Error  = {0}".format(err))
         return result;            
@@ -118,8 +119,6 @@ class ODSTimesheetReader(TimesheetReader):
                 sheet  =  sheets[0]
                 if(sheet is not None):
                     timesheet =  Timesheet(sheet[0])
-                    timesheet.OverTimeHours   = 0.0
-                    timesheet.TotalLegalHours = 0.0
                     records  =  sheet[1]
                     """
                       Records are list of records.
@@ -190,8 +189,6 @@ class XLSTimesheetReader(TimesheetReader):
             #interested on the first sheet
             sheet      =  workbook.sheets()[0];
             timesheet  = Timesheet(sheet.name);
-            timesheet.OverTimeHours   = 0.0
-            timesheet.TotalLegalHours = 0.0
             cell = sheet.cell(0,4) # the timesheet header text
             if(cell is not None):            
                 timesheet.Header            = cell.value;
@@ -244,7 +241,7 @@ if __name__ =="__main__":
     timesheet =  treader.Parse();
     print(timesheet)
     print(timesheet.Template);
-    print(timesheet.OverTimeHours);
+    print(timesheet.OverTimeWeeklyHours);
     print(timesheet.Description);
 
     #Write back the timesheet file
@@ -254,5 +251,5 @@ if __name__ =="__main__":
     timesheet2 = xslreader.Parse();
     print(timesheet2)
     print(timesheet2.Template);
-    print(timesheet2.OverTimeHours);
+    print(timesheet2.OverTimeWeeklyHours);
     print(timesheet2.Description);

@@ -1,131 +1,9 @@
 import os;
-from modelbase import ModelBase
-
-
-'''
-
-    Enum type of the day of the week
- 
-'''
-class DayOfWeekType(int):
-    MONDAY      =   0x00,
-    TUESDAY     =   0x01,
-    WEDNESDAY   =   0x02,
-    THURSDAY    =   0x03,
-    FRIDAY      =   0x04,
-    SATURDAY    =   0x05,
-    SUNDAY      =   0x06
-
-
-
-'''
-    Enum type for project types;
-    servotest timesheet have two project types
-    fixed and user defined.
-'''
-class ProjectType(int):
-    USER_DEFINED_PROJECT  =  0x01
-    FIXED_PROJECT         =  0x02
-
-
-'''
-    The project record data structure
-    This included the time spend on the project
-    base on the variables weeks days.
-    
-'''
-
-class Project(object):
-
-    def __init__(self,workOrderNumber:str, projectType  =  ProjectType.USER_DEFINED_PROJECT):
-        if(type(workOrderNumber) != str):
-            raise TypeError("@Project: expecting a work order number")
-        self.RSRCE               = ""
-        self.__WorkOrderNumber   = workOrderNumber
-        self.__ContractNumber    = ""
-        self.__ElapseHours           =  dict();
-        self.__ElapseHours[DayOfWeekType.MONDAY]    = 0.0
-        self.__ElapseHours[DayOfWeekType.TUESDAY]   = 0.0
-        self.__ElapseHours[DayOfWeekType.WEDNESDAY] = 0.0
-        self.__ElapseHours[DayOfWeekType.THURSDAY]  = 0.0
-        self.__ElapseHours[DayOfWeekType.FRIDAY]    = 0.0
-        self.__ElapseHours[DayOfWeekType.SATURDAY]  = 0.0
-        self.__ElapseHours[DayOfWeekType.SUNDAY]    = 0.0
-        self.__projectType                          = projectType
-        self.__Description                          = ""
-        self.__WeeklyHours                          = 0.0;
-
-
-    @property
-    def WeeklyHours(self):
-        return self.__WeeklyHours;
-
-    @WeeklyHours.setter
-    def WeeklyHours(self, value:float):
-        if type(value) != float:
-            if(type(value) != int):
-                raise TypeError("@WeeklyHours: expecting a floating value but {0} given".format(type(value)))
-        self.__WeeklyHours  =  float(value)                        
-        
-    @property
-    def Description(self):
-        return self.__Description;
-
-    @Description.setter
-    def Description(self, description:str):
-        if(type(description) != str):
-            raise TypeError("@Description: expecting string object")
-        self.__Description =  description;
-            
-    @property
-    def ContractNumber(self):
-        return self.__ContractNumber;
-
-    @ContractNumber.setter
-    def ContractNumber(self, contractNumber:str):
-        if(type(contractNumber) != str):
-            if(type(contractNumber) != int):
-                raise TypeError("@ContractNumber: expecting a string object but {0} given.".format(type(contractNumber)))
-        self.__ContractNumber = contractNumber;
-        
-    @property
-    def Type(self):
-        return self.__projectType
-    
-    @property
-    def WorkOrderNumber(self):
-        return self.__WorkOrderNumber
-    
-    @WorkOrderNumber.setter
-    def WorkOrderNumber(self, orderNumber:str):
-        if(type(orderNumber) != str):
-            raise TypeError("@WorkOrderNumber: expecting a string  object")
-        self.__WorkOrderNumber = orderNumber;
-
-    @property
-    def ElapseHours(self):
-        return self.__ElapseHours;
-
-    def AddHour(self, day: DayOfWeekType , hours : float):
-        if(day != DayOfWeekType.MONDAY) and \
-            (day != DayOfWeekType.TUESDAY) and \
-            (day != DayOfWeekType.WEDNESDAY) and \
-            (day != DayOfWeekType.THURSDAY) and \
-            (day != DayOfWeekType.FRIDAY) and \
-            (day != DayOfWeekType.SATURDAY) and \
-            (day != DayOfWeekType.SUNDAY):
-                raise TypeError("@AddHour: expecting parameter 1 to be enum of DayOfWeekType");
-        else:
-            if(type(hours) != float):
-                if(type(hours) != int):
-                    raise TypeError("@AddHour: expecting parameter 2 to be floating number");
-            self.ElapseHours[day]  =  hours;
-
-    def __str__(self):
-        return "Project(contract = {0})".format(self.ContractNumber)
+from modelbase  import ModelBase
+from timeobject import TimeObject
+from project    import Project, DayOfWeekType
 
     
-
 
 '''
     The Project collection data structure.
@@ -137,31 +15,27 @@ class ProjectCollection(object):
         self.__Headers      =  list();
         self.__Records      =  list();
         self.__FixedRecords =  list();
-        self.__FixedElapseHours     = 0.0
-        self.__ElapseHours          = 0.0;
+        self.__FixedElapseHours     = TimeObject(0.0)
+        self.__ElapseHours          = TimeObject(0.0);
 
     @property
-    def ElapseHours(self):
-        return self.__ElapseHours;
+    def Total(self):
+        return self.ElapseWeeklyHours + self.FixedElapseWeeklyHours
 
-    @ElapseHours.setter
-    def ElapseHours(self, hours:float):
-        if(type(hours) != float):
-            if(type(hours) != int):
-                raise TypeError("@ElapseHours: expecting a floating value");
-        self.__ElapseHours  =  hours;
+    @property
+    def ElapseWeeklyHours(self):
+        total =  TimeObject(0.0);
+        for project in self.Records:
+            total += project.WeeklyElapseHours
+        return total;
 
 
     @property
-    def FixedElapseHours(self):
-        return self.__FixedElapseHours;
-
-    @FixedElapseHours.setter
-    def FixedElapseHours(self, hours:float):
-        if(type(hours) != float):
-            if(type(hours) != int):
-                raise TypeError("@FixedElapseHours: expecting a floating value");
-        self.__FixedElapseHours  =  hours;
+    def FixedElapseWeeklyHours(self):
+        total =  TimeObject(0.0);
+        for project in self.FixedRecords:
+            total += project.WeeklyElapseHours
+        return total;
         
     @property
     def Header(self):
@@ -196,23 +70,11 @@ class Timesheet(ModelBase):
         self.__ProjectHeaders       = list()
         self.__Projects             = ProjectCollection()
         self.__Description          = ""
-        self.__ElapseHours          = 0.0;
-        self.__OverTimeHours        = 0
-        self.__TotalLegalHours      = 0
+        self.__ElapseHours          = TimeObject(0.0);
+        self.__OverTimeHours        = TimeObject(0.0);
+        self.__TotalLegalHours      = TimeObject(0.0);
         self.__Template             = ""
         
-    
-    @property
-    def ElapseHours(self):
-        return self.__ElapseHours
-
-    @ElapseHours.setter
-    def ElapseHours(self, hours):
-        if(type(hours) != float):
-            if(type(hours) != int):
-                raise TypeError("@ElapseHours: expecting a floating number");
-        self.__ElapseHours  =  hours;
-
     @property
     def Description(self):
         return self.__Description
@@ -253,23 +115,23 @@ class Timesheet(ModelBase):
         self.__EmployeeName = employeeName.strip()
 
     @property
-    def TotalLegalHours(self):
+    def TotalLegalWeeklyHours(self):
         return self.__TotalLegalHours
 
-    @TotalLegalHours.setter
-    def TotalLegalHours(self, hours:float):
-        if(type(hours) != float) and (type(hours) != int):
-            raise TypeError("@TotalLegalHours: expecting a number")
+    @TotalLegalWeeklyHours.setter
+    def TotalLegalWeeklyHours(self, hours:float):
+        if(isinstance(hours, TimeObject) is not True):
+            raise TypeError("@TotalLegalHours: expecting a TimeObject object")
         self.__TotalLegalHours =  hours
 
     @property
-    def OverTimeHours(self):
+    def OverTimeWeeklyHours(self):
         return self.__OverTimeHours
 
-    @OverTimeHours.setter
-    def OverTimeHours(self, value:float):
-        if(type(value) != int) and (type(value) != float):
-            raise TypeError("@OverTimeHours property expecting a number")
+    @OverTimeWeeklyHours.setter
+    def OverTimeWeeklyHours(self, value:float):
+        if(isinstance(value, TimeObject) is not True):
+            raise TypeError("@OverTimeHours property expecting a TimeObject object")
         self.__OverTimeHours  =  value        
 
     @property
@@ -311,46 +173,12 @@ class Timesheet(ModelBase):
     def Projects(self):
         return self.__Projects
 
-
-
-    def Compute(self):
-        if(self.Projects is not None):           
-            for project in self.Projects.Records:
-                hours = 0.0
-                if(project.ContractNumber != ""):
-                   hours  += project.ElapseHours[DayOfWeekType.MONDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.TUESDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.WEDNESDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.THURSDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.FRIDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.SATURDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.SUNDAY]
-                project.WeeklyHours= hours;
-                self.Projects.ElapseHours += project.WeeklyHours
-           
-            # calculate for special projects
-            for project in self.Projects.FixedRecords:
-                hours = 0.0
-                if(project.ContractNumber != ""):
-                   hours  += project.ElapseHours[DayOfWeekType.MONDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.TUESDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.WEDNESDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.THURSDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.FRIDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.SATURDAY]
-                   hours  += project.ElapseHours[DayOfWeekType.SUNDAY]
-                project.WeeklyHours= hours;
-                self.Projects.FixedElapseHours += project.WeeklyHours
-          
-            # Compute the total timesheet elapse hours
-            self.ElapseHours  = self.Projects.ElapseHours +  self.Projects.FixedElapseHours            
-        
-
     def __str__(self):
         return "Timesheet(employee = {0})".format(self.EmployeeName)
 
 
 if __name__ =="__main__":
     timesheet =  Timesheet("Obaro I. Johnson");
-    timesheet.Compute();
-    print(timesheet.ElapseHours)
+    timesheet.Projects.Records.append(Project("CRRC080"))
+    timesheet.Projects.Records[0].TimeHistory.Update(DayOfWeekType.MONDAY, 1000 * 3 * 60 * 60)
+    print(timesheet.Projects.Total)

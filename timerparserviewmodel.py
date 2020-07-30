@@ -2,176 +2,163 @@
  Create the timesheet model . to calculated the time sheet as the time is entered.
 """
 import os;
-from PyPDF2 import PdfFileWriter;
-from controllerbase import ControllerBase
-from modelbase import ModelBase;
-from timesheet import Timesheet, Project, ProjectType , DayOfWeekType
-from timesheetreader import TimesheetReader,  ODSTimesheetReader, XLSTimesheetReader
-from timesheetrecorder import TimesheetRecorder
 import datetime as dt;
-from threading import Thread, Lock
-
-    
-DAILY_EXPECTED_HOURS  = 35.00 # this is for servotest
-WEEKLY_UNPAY_OVERTIME_HOURS  = 2.0   #  Servotest
-
-
-
-
-    
-
-class TimesheetModel(ModelBase):
-
-    def __init__(self, filename:str = None, daily_expected_hours =  DAILY_EXPECTED_HOURS , benefit_hours  = WEEKLY_UNPAY_OVERTIME_HOURS ):
-        super().__init__();
-        if(os.path.exists(filename) is not True):
-            raise TypeError("{0} does not exists".format(filename));
-        details  = os.path.splitext(filename)
-        if(len(details) <= 1):
-            raise TypeError("@Invalid file extension provided");
-        extension = details[1][1:].lower();
-        if(extension =='xls') or (extension  == 'xlsx'):
-            self.__Reader  =  XLSTimesheetReader(filename  =  filename);
-        elif(extension=='ods'):
-            self.__Reader  = ODSTimesheetReader(filename  =  filename);
-        self.__IsAlreadyLoaded = False;
-        self.__Timesheet = None;
-        self.__DailyExpectedHours  = daily_expected_hours if((type(daily_expected_hours) == float) or (type(daily_expected_hours) == int)) else 0.0
-        self.__WeeklyUnPayOvertimeHours  = benefit_hours if((type(benefit_hours) == float) or (type(benefit_hours) == int)) else 0.0
-        #Load the timesheet
-        if(self.__Reader != None):
-            if(self.__IsAlreadyLoaded != True):
-                self.__Timesheet  =  self.__Reader.Parse()
-                self.__IsAlreadyLoaded = True
-        self.__TimeRecorder  = TimesheetRecorder(interval = 1);
-        self.__CurrentProject  = None;
+import PyPDF2
+from PyPDF2 import PdfFileWriter;
+from controllerbase    import ControllerBase
+from project import Project, ProjectType
+from timesheet         import Timesheet, DayOfWeekType
+from timesheetreader   import TimesheetReader,  ODSTimesheetReader, XLSTimesheetReader
+from timesheetrecorder import TimesheetRecorder
+from timesheetmodel    import TimesheetModel, XLSTimesheetLoader
+from  PyPDF2.pdf  import PageObject
 
 
-    @property
-    def Recorder(self):
-        return self.__TimeRecorder;
-                
-    @property
-    def WeeklyUnPayOvertimeHours(self):
-        return self.__WeeklyUnPayOvertimeHours;
 
+class TimesheetPDFWriter(object):
 
-    @property
-    def DailyExpectedHours(self) -> float:
-        return self.__DailyExpectedHours
-
-    @DailyExpectedHours.setter
-    def DailyExpectedHours(self, hours:float):
-        if(type(hours) != float):
-            if(type(hours) != int):
-                raise TypeError("@DailyExpectedHours: expecting a floating point value")
-        self.__DailyExpectedHours =  hours        
-
+    def __init__(self):
         
-    @property
-    def Timesheet(self):
-        return self.__Timesheet
-
-    @property
-    def Project(self):
-        return self.__CurrentProject;
-
-    @Project.setter
-    def Project(self, project: Project):
-        if(isinstance(project, Project) is not True):
-            raise  TypeError("@Project: expecting a Timesheet.Project object type");
-        self.__CurrentProject  =  project
+        pass;
 
 
-    def Compute(self)-> Timesheet:                
-        if( self.Timesheet is not None):
-            self.Timesheet.Compute();
-            # computer  total legal hours and overtimehours
-            if(self.Timesheet.ElapseHours > self.DailyExpectedHours):
-
-                overtimeDiff  =  (self.Timesheet.ElapseHours   - self.DailyExpectedHours)
-                if(overtimeDiff  > self.WeeklyUnPayOvertimeHours):
-                    self.Timesheet.OverTimeHours   = overtimeDiff - self.WeeklyUnPayOvertimeHours;
-            self.Timesheet.TotalLegalHours =  self.Timesheet.ElapseHours   - self.Timesheet.OverTimeHours
-
-    @property
-    def Projects(self):
-        projects  =  list();
-        if(self.Timesheet.Projects is not None):
-            projects  =  self.Timesheet.Projects.Records + self.Timesheet.Projects.FixedRecords;
-        return projects;
-
-    def CreateProject(self , **kwargs):
-      
-        contract             =  kwargs['contract'] if('contract' in kwargs) else None;
-        workOrderNumber      =  kwargs['work_order_number'] if('work_order_number' in kwargs) else "";
-        project_type         =  kwargs['project_type'] if('project_type' in kwargs) else ProjectType.USER_DEFINED_PROJECT;
-        
-        if(contract is None):
-            raise TypeError("@CreateProject: expect the contract number of the project");
-        project  = Project(workOrderNumber,project_type);
-        project.ContractNumber  = contract ;
-
-        if(project.Type  == ProjectType.USER_DEFINED_PROJECT):
-            self.Timesheet.Projects.Records.append(project)
-        else:
-            self.Timesheet.Projects.FixedRecords.append(project)
-
-        return project;
-        
-        
-
-    def Find(self, **kwargs):
-        result   =  None;
-        contract  =  kwargs['contract'] if('contract' in kwargs) else '';
-
-        for project in self.Projects:
-            if(project.ContractNumber  == contract):
-                result  =  project;
-                break;
-        return result;
-
-
-    
-
+    def Write(self, filename : str ,  timesheet: Timesheet):
+        if(isinstance(timesheet, Timesheet)):
+            writer  = PdfFileWriter(fname  =  filename);
+            print(timesheet)
+            print(filename)
     
         
 
 class  TimesheetController(ControllerBase):
 
-    def __init__(self):
-        super().__init__(self);
-                
-                                
+    def __init__(self, model : TimesheetModel, **kwargs):
+        super().__init__();
+        if(isinstance(model, TimesheetModel) is not True):
+            raise TypeError("@Timesheet Controller : expecting parameter 1 to TimesheetModel type")
 
+        # configured the timesheet
+        self.__TimesheetViewModel  = model
+        self.__TimesheetViewModel.ProjectSelected       += self.__OnProjectSelected
+        
+        #Configure the time sheet pdf writer
+        self.__TimesheetPdfWriter  = TimesheetPDFWriter();
+
+        # Configured the timesheet recorder
+        self.__TimesheetRecorder   =  TimesheetRecorder(interval = 1);
+        self.__TimesheetRecorder.Completed              += self.__RecordCompleted;
+        self.__TimesheetRecorder.Progressed             += self.__OnRecordProgressing
+        self.__TimesheetRecorder.Failured               += self.__OnRecordingFailured
+        self.__TimesheetRecorder.Started                += self.__OnRecordStarted
+
+    @property
+    def Model(self):
+        return self.__TimesheetViewModel;
+
+    @property
+    def Today(self):
+        today  = dt.datetime.now();
+        return today;
+        
+    @property
+    def WeekDay(self):
+        '''
+         Return the week day type which can be used to stamp the timesheet.
+        '''
+        result  =  None
+        today  = self.Today;
+        if(isinstance(today, dt.datetime)):
+            weekday  = today.weekday() # 0 - 6 starting from monday
+            
+            if(weekday == 0):
+                result  =  DayOfWeekType.MONDAY
+            elif(weekday == 1):
+                result  = DayOfWeekType.TUESDAY
+            elif(weekday == 2):
+                result  = DayOfWeekType.WEDNESDAY
+            elif(weekday == 3):
+                result  =  DayOfWeekType.THURSDAY
+            elif(weekday == 4):
+                result  = DayOfWeekType.FRIDAY
+            elif(weekday == 5):
+                result  =  DayOfWeekType.SATURDAY
+            else:
+                result  =  DayOfWeekType.SUNDAY
+                
+        return result;
+
+ 
+    @property
+    def Recorder(self):
+        return  self.__TimesheetRecorder
+
+    @property
+    def PdfWriter(self):
+        return self.__TimesheetPdfWriter;
+
+    def __OnRecordStarted(self, event):
+        print("Timesheet recording started");
+        if(self.__TimesheetViewModel != None):
+            if(self.__TimesheetViewModel.Project == None):
+                print("No Project selected")
+                self.Recorder.Stop();
+
+    def __OnRecordingFailured(self, event):
+        print(event.Error)
+
+    def __OnProjectSelected(self, evet):
+        print("Project selected")
+
+
+    def __OnRecordProgressing(self, event):
+        print("Recording In Progress = {0}:{1}:{2}.{3}".format(event.Elapsed.Hours, event.Elapsed.Minutes, event.Elapsed.Seconds, event.Elapsed.Milliseconds))
+        if(self.Model != None):
+            project      =  self.Model.Project
+            project.TimeHistory.Update(self.WeekDay,  event.Elapsed.Timestamp)
+            print(project.TimeHistory.Get(self.WeekDay))
+
+
+    def __RecordCompleted(self, event):
+        if(evt != None):
+            print("Recording Completed = {0}:{1}:{2}.{3}".format(event.Elapsed.Hours, event.Elapsed.Minutes, eevent.Elapsed.Seconds, event.Elapsed.Milliseconds));
+            
+        
 
 
 if __name__ =="__main__":
     ODS_TIME_SHEET_FILE   = "./data/timesheet.ods"
     XLS_TIME_SHEET_FILE   = "./data/timesheet.xlsx"
-    WRITE_TEST_FILE       = "./data/pdftest.pdf";
-    model       =  TimesheetModel(XLS_TIME_SHEET_FILE);
-    pdf_writer  =  PdfFileWriter();
-
-    print("Creating a new Project");
-    project  =  model.CreateProject(contract  =  "OB890");
-    print(project)
-    print(project.WeeklyHours);
-    project.AddHour(DayOfWeekType.MONDAY, 2.0);
+    WRITE_TEST_FILE       = "./data/pdftest2.pdf";
     
+    loader      =  XLSTimesheetLoader(filename=XLS_TIME_SHEET_FILE);    
+    model       =  TimesheetModel(loader.Reader.Parse());
+    controller  =  TimesheetController(model  = model);
 
-    print("Computing test");
-    model.Compute();
-    print(model.Timesheet.TotalLegalHours);
-    print(model.Timesheet.OverTimeHours);
-    print("\nPrint all project test");
-    for project in model.Projects:
-        print(project.ContractNumber);
-    print("\nFind existing contract");
-    project  =  model.Find(contract  = '61534');
-    if(project is not None):
-        print(project.ContractNumber);
-        print(project.WeeklyHours)
+    controller.Recorder.Start();
+    model.Project  =  model.Projects[0];
+    print(controller.Today.weekday())
+    pdf =  PdfFileWriter();
+    print(PyPDF2.pdf)
+    with open(WRITE_TEST_FILE , mode='wb+') as stream:
+     
+        pdf.addBlankPage(594 , 841);
+        pdf.setPageLayout("/SinglePage")
+
+        # Create a stream object
+        # according to the pdf standard this contain the stream of pdf objects
+        #streamObject =  StreamObject();
+        page  = pdf.getPage(0);
+        content  =  page.getContents();
+        print(content)
+        
+       
+       
+        
+            
+        pdf.write(stream)
+
+
+   
     
     
    

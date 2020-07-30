@@ -1,44 +1,35 @@
 import datetime as dt;
 import math
 import time;
-from   threading import Thread, Lock
+import threading;
 from events import EventHandler, Event
+from timeobject import TimeObject
 
 
-class ElapseEventArgs(Event):
+class RecordingEventArgs(Event):
 
     def __init__(self, seconds):
         super().__init__("Timesheet.recorder.Elapse.event")
         if(type(seconds) != float):
             if(type(seconds) != int):
                 raise TypeError("@ElapseEventArgs: expecting parameter 1 to be a floating number");
-            
-        self.__Seconds      = int(seconds);
-        self.__MiliSeconds  = round(seconds - self.__Seconds, 2);
-        self.__Minutes      = int(self.__Seconds / 60);
-        self.__Hours        = int(self.__Minutes / 60);
-        self.__Elapsed      = seconds;
+                 
+        milliseconds     = 1000 * seconds;
+        self.__Elapsed  = TimeObject(milliseconds);
 
     @property
     def Elapsed(self):
         return self.__Elapsed;
 
-    @property
-    def Seconds(self):
-        return self.__Seconds;
-
-    @property
-    def Hours(self):
-        return self.__Hours;
-
-    @property
-    def Minutes(self):
-        return self.__Minutes;
-
-    @property
-    def MiliSeconds(self):
-        return self.__MiliSeconds
     
+class RecordingFaultEvent(Event):
+    def __init__(self, error: Exception):
+        super().__init__("recorder.fault.event")
+        self.__Error  =  error
+
+    @property
+    def Error(self):
+        return self.__Error
 
 class TimesheetRecorder(object):
 
@@ -47,11 +38,13 @@ class TimesheetRecorder(object):
         self.__IsStarted   =  False;
         self.__RunThread   =  None;
         self.__Interval    =   interval if ((type(interval) == float) or (type(interval) == int)) else 1;
-        self.__Locker      =   Lock();
+        self.__Locker      =   threading.Lock();
 
         #Event Handler
         self.Completed      = EventHandler();
         self.Progressed     = EventHandler();
+        self.Started        = EventHandler();
+        self.Failured       = EventHandler();
         pass;
 
     @property
@@ -66,7 +59,7 @@ class TimesheetRecorder(object):
         try:
             self.__Locker.acquire();
             if(self.IsStarted != True):
-                self.__RunThread  = Thread(target  =  self.__StartRecording);
+                self.__RunThread  = threading.Thread(target  =  self.__StartRecording);
                 self.__RunThread.daemon  = True
                 self.__RunThread.start();
         except Exception as err:
@@ -79,9 +72,11 @@ class TimesheetRecorder(object):
             self.__Locker.acquire();
             if(self.IsStarted is True):
                 self.__IsStarted = False;
+                
                 if(self.__RunThread != None):
-                    self.__RunThread.join(1)
-                    self.__RunThread = None
+                    if(threading.current_thread().ident != self.__RunThread.ident):
+                        self.__RunThread.join(1)
+                        self.__RunThread = None
             self.__Locker.release()
         except Exception as err:
             self.__Locker.release()
@@ -89,53 +84,62 @@ class TimesheetRecorder(object):
        
 
     def __StartRecording(self):
-       
-        self.__Locker.release();
-        self.__IsStarted   =  True;
-        now   = dt.datetime.now();
-        total_seconds  =  0;
-     
-        while (self.IsStarted):
-            time.sleep(self.Interval);
-            current_now    =  dt.datetime.now();
-            delta_time     =  current_now - now;
-            total_seconds  += delta_time.total_seconds();
-                
-            #if progress events
-            if(self.Progressed is not None):
-                self.Progressed(ElapseEventArgs(total_seconds));
-            now = current_now;
-                
 
-        if(self.Completed is not None):
-                self.Completed(ElapseEventArgs(total_seconds))
+        try:
+            self.__Locker.release();
+            self.__IsStarted   =  True;
+            now   = dt.datetime.now();
+            total_seconds  =  0;
+            
+            if(self.Started is not None):
+                self.Started(Event("recorder.start.event"));
+         
+            while (self.IsStarted):
+                time.sleep(self.Interval);
+                current_now    =  dt.datetime.now();
+                delta_time     =  current_now - now;
+                total_seconds  += delta_time.total_seconds();
+                    
+                #if progress events
+                if(self.Progressed is not None):
+                    self.Progressed(RecordingEventArgs(total_seconds));
+                now = current_now;
+                    
+
+            if(self.Completed is not None):
+                    self.Completed(RecordingEventArgs(total_seconds))
+        except Exception as err:
+            self.__IsStarted =  False
+            self.Failured(RecordingFaultEvent(err))
+           
                 
        
        
 
 if __name__ =="__main__":
-    end  = "\n\r"
-    def Completed(event):
-        print ("\nCompleted at = {0}:{1}:{2}.{3}".format(event.Hours, event.Minutes, event.Seconds, event.MiliSeconds),end);
+    end  = ""
 
-    def Progressing(event):
-        print ("\nProgress at= {0}:{1}:{2}.{3}".format(event.Hours, event.Minutes, event.Seconds, event.MiliSeconds),end);
+    def OnStarted(event):
+        print("Starting Recording")
+        
+    def OnCompleted(event):
+        print ("\nCompleted at = {0}:{1}:{2}.{3}".format(event.Elapsed.Hours, event.Elapsed.Minutes, event.Elapsed.Seconds, event.Elapsed.Milliseconds),end);
 
+    def OnProgressing(event):
+        print ("\nProgress at= {0}:{1}:{2}.{3}".format(event.Elapsed.Hours, event.Elapsed.Minutes, event.Elapsed.Seconds, event.Elapsed.Milliseconds),end);
+    def OnFailed(event):
+        print(event.Error)
         
     recorder  =  TimesheetRecorder();
-    recorder.Completed += Completed;
-    recorder.Progressed+= Progressing
+    recorder.Started    += OnStarted
+    recorder.Completed  += OnCompleted;
+    recorder.Progressed += OnProgressing
+    recorder.Failured   += OnFailed
     recorder.Start();
 
     count  = 0;
     try:
         while(True):
-            option  =  input("\nEnter e for stop = ");
-            if(option =='e'):
-                recorder.Stop()
-            elif(option =='s'):
-                if(recorder.IsStarted is not True):
-                    recorder.Start()
             time.sleep(1/100)
     except KeyboardInterrupt as err:
         recorder.Stop();
