@@ -3,17 +3,23 @@
 """
 import os;
 import datetime as dt;
+import wx
 import PyPDF2
 from PyPDF2 import PdfFileWriter;
-from controllerbase    import ControllerBase
-from project import Project, ProjectType
-from timesheet         import Timesheet, DayOfWeekType
-from timesheetreader   import TimesheetReader,  ODSTimesheetReader, XLSTimesheetReader
-from timesheetrecorder import TimesheetRecorder
-from timesheetmodel    import TimesheetModel, XLSTimesheetLoader
-from  PyPDF2.pdf  import PageObject
+from controllerbase     import ControllerBase
+from project            import Project, ProjectType
+from timesheet          import Timesheet, DayOfWeekType
+from timesheetreader    import TimesheetReader,  ODSTimesheetReader, XLSTimesheetReader
+from timesheetrecorder  import TimesheetRecorder
+from timesheetmodel     import TimesheetModel, XLSTimesheetLoader
+from  PyPDF2.pdf        import PageObject
 
 
+
+class TimesheetWindow(wx.Frame):
+
+    def __init__(self,parent):
+        super().__init__(parent);
 
 class TimesheetPDFWriter(object):
 
